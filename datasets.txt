@@ -1,2 +1,4 @@
 1;Тест1;classification;1000
 2;Тест2;regression;500
+3;Тест3;classification;2500
+4;Тест4;clustering;300
