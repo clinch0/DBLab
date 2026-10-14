@@ -1,0 +1,2 @@
+1;Тест1;classification;1000
+2;Тест2;regression;500
