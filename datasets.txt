@@ -1,5 +1,2 @@
 1;Тест1;classification;1000
-2;Тест2;regression;999
-5;Тест6;classification;2000
-6;Тест5;regression;100
-7;Тест6;classification;2000
+2;Тест2;regression;500

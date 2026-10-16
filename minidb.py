@@ -1,109 +1,174 @@
 import os
+import operator
 
-FILE = "datasets.txt"
+SCHEMAS = {
+    "datasets": [("id", "int"), ("name", "str"), ("task", "str"), ("size", "int")],
+    "models": [("id", "int"), ("name", "str"), ("version", "str"), ("description", "str")],
+    "experiments": [("id", "int"), ("dataset_id", "int"), ("model_id", "int"),
+                    ("accuracy", "float"), ("status", "str")],
+}
 
-def select_all():
+FOREIGN_KEYS = {
+    "experiments": {"dataset_id": "datasets", "model_id": "models"},
+}
+
+OPS = {
+    "=": operator.eq, "!=": operator.ne,
+    ">": operator.gt, "<": operator.lt,
+    ">=": operator.ge, "<=": operator.le,
+}
+
+
+def convert(text, type_name):
+    if type_name == "int":
+        return int(text)
+    if type_name == "float":
+        return float(text)
+    return text
+
+
+def read_all(table):
     rows = []
-    if not os.path.exists(FILE):
+    path = table + ".txt"
+    if not os.path.exists(path):
         return rows
-    with open(FILE, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
+            if line.strip() == "":
+                continue
             parts = line.strip().split(";")
-            rows.append({
-                "id": int(parts[0]),
-                "name": parts[1],
-                "task": parts[2],
-                "size": int(parts[3]),
-            })
+            row = {}
+            for i, (name, type_name) in enumerate(SCHEMAS[table]):
+                row[name] = convert(parts[i], type_name)
+            rows.append(row)
     return rows
 
 
-def save_all(rows):
-    with open(FILE, "w", encoding="utf-8") as f:
+def save_all(table, rows):
+    with open(table + ".txt", "w", encoding="utf-8") as f:
         for row in rows:
-            f.write(f"{row['id']};{row['name']};{row['task']};{row['size']}\n")
+            values = [str(row[name]) for name, _ in SCHEMAS[table]]
+            f.write(";".join(values) + "\n")
 
 
-def insert(name, task, size):
-    rows = select_all()
-    if len(rows) == 0:
-        new_id = 1
-    else:
-        new_id = max(row["id"] for row in rows) + 1
-    with open(FILE, "a", encoding="utf-8") as f:
-        f.write(f"{new_id};{name};{task};{size}\n")
-    return new_id
+def check_type(value, type_name):
+    if type_name == "int" and isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if type_name == "float" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if type_name == "str" and isinstance(value, str) and ";" not in value:
+        return value
+    return None
 
 
-def select_where(column, op, value):
+def row_exists(table, row_id):
+    for row in read_all(table):
+        if row["id"] == row_id:
+            return True
+    return False
+
+
+def check_foreign_keys(table, column, value):
+    parent = FOREIGN_KEYS.get(table, {}).get(column)
+    if parent is not None and not row_exists(parent, value):
+        print(f"Ошибка: в таблице {parent} нет строки с id={value}")
+        return False
+    return True
+
+
+def insert(table, **values):
+    schema = SCHEMAS[table]
+    needed = [name for name, _ in schema if name != "id"]
+    if set(values.keys()) != set(needed):
+        print(f"Ошибка: для таблицы {table} нужны поля {needed}")
+        return None
+
+    row = {}
+    for name, type_name in schema:
+        if name == "id":
+            continue
+        fixed = check_type(values[name], type_name)
+        if fixed is None:
+            print(f"Ошибка: поле {name} должно быть типа {type_name} (и без символа ;)")
+            return None
+        if not check_foreign_keys(table, name, fixed):
+            return None
+        row[name] = fixed
+
+    rows = read_all(table)
+    row["id"] = max([r["id"] for r in rows], default=0) + 1
+    rows.append(row)
+    save_all(table, rows)
+    return row["id"]
+
+
+def select_where(table, column, op, value):
     result = []
-    for row in select_all():
-        x = row[column]
-        if op == "=" and x == value:
-            result.append(row)
-        elif op == "!=" and x != value:
-            result.append(row)
-        elif op == ">" and x > value:
-            result.append(row)
-        elif op == "<" and x < value:
-            result.append(row)
-        elif op == ">=" and x >= value:
-            result.append(row)
-        elif op == "<=" and x <= value:
+    for row in read_all(table):
+        if OPS[op](row[column], value):
             result.append(row)
     return result
 
 
-def update(row_id, column, new_value):
-    rows = select_all()
-    found = False
+def update(table, row_id, column, new_value):
+    type_name = dict(SCHEMAS[table]).get(column)
+    if type_name is None or column == "id":
+        print("Ошибка: такое поле нельзя менять")
+        return False
+    fixed = check_type(new_value, type_name)
+    if fixed is None:
+        print(f"Ошибка: поле {column} должно быть типа {type_name}")
+        return False
+    if not check_foreign_keys(table, column, fixed):
+        return False
+
+    rows = read_all(table)
     for row in rows:
         if row["id"] == row_id:
-            row[column] = new_value
-            found = True
-    if found:
-        save_all(rows)
-    else:
-        print("Ошибка: строки с таким id нет")
-    return found
+            row[column] = fixed
+            save_all(table, rows)
+            return True
+    print("Ошибка: строки с таким id нет")
+    return False
 
 
-def delete(row_id):
-    rows = select_all()
+def delete(table, row_id):
+    for child_table, fks in FOREIGN_KEYS.items():
+        for column, parent in fks.items():
+            if parent == table:
+                for child_row in read_all(child_table):
+                    if child_row[column] == row_id:
+                        print(f"Ошибка: на эту строку ссылается {child_table} (id={child_row['id']})")
+                        return False
+
+    rows = read_all(table)
     new_rows = [row for row in rows if row["id"] != row_id]
     if len(new_rows) == len(rows):
         print("Ошибка: строки с таким id нет")
         return False
-    save_all(new_rows)
+    save_all(table, new_rows)
     return True
 
 
-if len(select_all()) == 0:
-    insert("Тест1", "classification", 1000)
-    insert("Тест2", "regression", 500)
-    insert("Тест3", "classification", 2500)
-    insert("Тест4", "clustering", 300)
+def show(table):
+    print(f"{table}")
+    for row in read_all(table):
+        print(row)
 
-print("Было:")
-for row in select_all():
-    print(row)
+if len(read_all("datasets")) == 0:
+    insert("datasets", name="Тест1", task="classification", size=1000)
+    insert("datasets", name="Тест2", task="regression", size=500)
+    insert("models", name="МодельA", version="1.0", description="Описание модели A")
+    insert("models", name="МодельB", version="2.1", description="Описание модели B")
+    insert("experiments", dataset_id=1, model_id=1, accuracy=0.91, status="completed")
+    insert("experiments", dataset_id=1, model_id=2, accuracy=0.88, status="completed")
+    insert("experiments", dataset_id=2, model_id=1, accuracy=0.76, status="running")
 
-update(2, "size", 999)
-delete(4)
+show("datasets")
+show("models")
+show("experiments")
 
-print("Стало:")
-for row in select_all():
-    print(row)
-
-insert("Тест5", "regression", 100)
-
-print("Стало 2:")
-for row in select_all():
-    print(row)
-
-delete(3)
-insert("Тест6", "classification", 2000)
-
-print("Стало 3:")
-for row in select_all():
-    print(row)
+print("Проверки ошибок:")
+insert("experiments", dataset_id=99, model_id=1, accuracy=0.5, status="running")
+insert("datasets", name="Тест3", task="clustering", size="много")
+delete("datasets", 1)
