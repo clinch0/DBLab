@@ -1,17 +1,98 @@
 import os
 
-SCHEMAS = {
-    "datasets": [("id", "int"), ("name", "str"), ("task", "str"), ("size", "int")],
-    "models": [("id", "int"), ("name", "str"), ("version", "str"), ("description", "str")],
-    "experiments": [("id", "int"), ("dataset_id", "int"), ("model_id", "int"),
-                    ("accuracy", "float"), ("status", "str")],
-}
-
-FOREIGN_KEYS = {
-    "experiments": {"dataset_id": "datasets", "model_id": "models"},
-}
-
+SCHEMA_FILE = "schema.txt"
+SCHEMAS = {}
+FOREIGN_KEYS = {}
+TYPES = ("int", "float", "str")
 COMPARE_SIGNS = ("=", "!=", ">", "<", ">=", "<=")
+
+
+def load_schema():
+    SCHEMAS.clear()
+    FOREIGN_KEYS.clear()
+    if not os.path.exists(SCHEMA_FILE):
+        return
+    with open(SCHEMA_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line == "":
+                continue
+            table, fields_text, fks_text = line.split(";")
+            fields = []
+            for part in fields_text.split(","):
+                field_name, type_name = part.split(":")
+                fields.append((field_name, type_name))
+            SCHEMAS[table] = fields
+            if fks_text != "":
+                fks = {}
+                for part in fks_text.split(","):
+                    column, parent = part.split(">")
+                    fks[column] = parent
+                FOREIGN_KEYS[table] = fks
+
+
+def save_schema():
+    with open(SCHEMA_FILE, "w", encoding="utf-8") as f:
+        for table, fields in SCHEMAS.items():
+            fields_text = ",".join(name + ":" + type_name for name, type_name in fields)
+            fks = FOREIGN_KEYS.get(table, {})
+            fks_text = ",".join(column + ">" + parent for column, parent in fks.items())
+            f.write(table + ";" + fields_text + ";" + fks_text + "\n")
+
+
+def valid_name(name):
+    return name != "" and name.replace("_", "").isalnum()
+
+
+def create_table(name, fields, foreign_keys=None):
+    if foreign_keys is None:
+        foreign_keys = {}
+    if not valid_name(name):
+        print("Ошибка: имя таблицы может содержать буквы, цифры и _")
+        return False
+    if name in SCHEMAS:
+        print(f"Ошибка: таблица {name} уже есть")
+        return False
+    if len(fields) == 0:
+        print("Ошибка: нужно хотя бы одно поле кроме id")
+        return False
+    names = ["id"]
+    for field_name, type_name in fields:
+        if not valid_name(field_name):
+            print(f"Ошибка: неверное имя поля {field_name}")
+            return False
+        if type_name not in TYPES:
+            print(f"Ошибка: тип {type_name} не поддерживается (int, float, str)")
+            return False
+        if field_name in names:
+            print(f"Ошибка: поле {field_name} повторяется")
+            return False
+        names.append(field_name)
+    types = dict(fields)
+    for column, parent in foreign_keys.items():
+        if column not in types or types[column] != "int":
+            print(f"Ошибка: внешний ключ {column} должен быть полем типа int")
+            return False
+        if parent not in SCHEMAS:
+            print(f"Ошибка: таблицы {parent} нет")
+            return False
+    SCHEMAS[name] = [("id", "int")] + list(fields)
+    if foreign_keys:
+        FOREIGN_KEYS[name] = dict(foreign_keys)
+    save_schema()
+    open(name + ".txt", "a", encoding="utf-8").close()
+    return True
+
+
+def create_default_tables():
+    if "datasets" not in SCHEMAS:
+        create_table("datasets", [("name", "str"), ("task", "str"), ("size", "int")])
+    if "models" not in SCHEMAS:
+        create_table("models", [("name", "str"), ("version", "str"), ("description", "str")])
+    if "experiments" not in SCHEMAS:
+        create_table("experiments",
+                     [("dataset_id", "int"), ("model_id", "int"), ("accuracy", "float"), ("status", "str")],
+                     {"dataset_id": "datasets", "model_id": "models"})
 
 
 def convert(text, type_name):
@@ -213,6 +294,7 @@ def show_join():
 
 
 def fill_test_data():
+    create_default_tables()
     if len(read_all("datasets")) > 0:
         print("Данные уже есть, ничего не добавляю")
         return
@@ -227,7 +309,7 @@ def fill_test_data():
 
 
 def choose_table():
-    name = input("Таблица (datasets / models / experiments): ").strip()
+    name = input(f"Таблица ({' / '.join(SCHEMAS)}): ").strip()
     if name not in SCHEMAS:
         print("Ошибка: нет такой таблицы")
         return None
@@ -290,6 +372,29 @@ def ask_conditions(table):
     return True, conditions, logic
 
 
+def ask_create_table():
+    name = input("Имя новой таблицы: ").strip()
+    text = input("Поля в виде имя:тип через запятую (id добавится сам), например title:str,score:float: ").strip()
+    fields = []
+    for part in text.split(","):
+        pieces = part.strip().split(":")
+        if len(pieces) != 2:
+            print("Ошибка: поле нужно писать как имя:тип")
+            return
+        fields.append((pieces[0].strip(), pieces[1].strip()))
+    fks_text = input("Внешние ключи в виде поле>таблица через запятую (пусто = нет): ").strip()
+    foreign_keys = {}
+    if fks_text != "":
+        for part in fks_text.split(","):
+            pieces = part.strip().split(">")
+            if len(pieces) != 2:
+                print("Ошибка: внешний ключ нужно писать как поле>таблица")
+                return
+            foreign_keys[pieces[0].strip()] = pieces[1].strip()
+    if create_table(name, fields, foreign_keys):
+        print(f"Таблица {name} создана")
+
+
 def menu():
     while True:
         print()
@@ -299,7 +404,8 @@ def menu():
         print("4 - изменить поле")
         print("5 - удалить строку")
         print("6 - эксперименты с названиями датасета и модели (INNER JOIN)")
-        print("7 - заполнить тестовыми данными")
+        print("7 - создать таблицы задания и тестовые данные")
+        print("8 - создать новую таблицу (CREATE TABLE)")
         print("0 - выход")
         choice = input("Команда: ").strip()
 
@@ -311,6 +417,9 @@ def menu():
 
         elif choice == "7":
             fill_test_data()
+
+        elif choice == "8":
+            ask_create_table()
 
         elif choice in ("1", "2", "3", "4", "5"):
             table = choose_table()
@@ -360,4 +469,5 @@ def menu():
             print("Неизвестная команда")
 
 
+load_schema()
 menu()
