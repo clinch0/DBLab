@@ -119,6 +119,52 @@ def select_where(table, column, op, value):
     return result
 
 
+def matches(row, conditions, logic):
+    results = []
+    for column, op, value in conditions:
+        results.append(compare(row[column], op, value))
+    if logic == "AND":
+        return all(results)
+    return any(results)
+
+
+def select(table, columns=None, conditions=None, logic="AND"):
+    result = []
+    for row in read_all(table):
+        if conditions and not matches(row, conditions, logic):
+            continue
+        if columns is None:
+            result.append(row)
+        else:
+            short_row = {}
+            for column in columns:
+                short_row[column] = row[column]
+            result.append(short_row)
+    return result
+
+
+def prefixed(table):
+    result = []
+    for row in read_all(table):
+        new_row = {}
+        for key, value in row.items():
+            new_row[table + "." + key] = value
+        result.append(new_row)
+    return result
+
+
+def inner_join(left_rows, left_column, right_table, right_column):
+    right_rows = prefixed(right_table)
+    result = []
+    for left in left_rows:
+        for right in right_rows:
+            if left[left_column] == right[right_column]:
+                joined = dict(left)
+                joined.update(right)
+                result.append(joined)
+    return result
+
+
 def update(table, row_id, column, new_value):
     type_name = dict(SCHEMAS[table]).get(column)
     if type_name is None or column == "id":
@@ -176,9 +222,24 @@ show("datasets")
 show("models")
 show("experiments")
 
-print("Поиск: accuracy > 0.8")
-for row in select_where("experiments", "accuracy", ">", 0.8):
+print("Столбцы name и size у датасетов с size > 400:")
+for row in select("datasets", columns=["name", "size"], conditions=[("size", ">", 400)]):
     print(row)
+
+print("AND: accuracy > 0.8 И status = completed")
+for row in select("experiments", conditions=[("accuracy", ">", 0.8), ("status", "=", "completed")], logic="AND"):
+    print(row)
+
+print("OR: status = running ИЛИ accuracy > 0.9")
+for row in select("experiments", conditions=[("status", "=", "running"), ("accuracy", ">", 0.9)], logic="OR"):
+    print(row)
+
+print("INNER JOIN: эксперименты вместе с названиями датасета и модели")
+step1 = inner_join(prefixed("experiments"), "experiments.dataset_id", "datasets", "datasets.id")
+step2 = inner_join(step1, "experiments.model_id", "models", "models.id")
+for row in step2:
+    print(row["experiments.id"], row["datasets.name"], row["models.name"],
+          row["experiments.accuracy"], row["experiments.status"])
 
 print("Проверки ошибок:")
 insert("experiments", dataset_id=99, model_id=1, accuracy=0.5, status="running")
