@@ -1,5 +1,4 @@
 import os
-import operator
 
 SCHEMAS = {
     "datasets": [("id", "int"), ("name", "str"), ("task", "str"), ("size", "int")],
@@ -12,12 +11,6 @@ FOREIGN_KEYS = {
     "experiments": {"dataset_id": "datasets", "model_id": "models"},
 }
 
-OPS = {
-    "=": operator.eq, "!=": operator.ne,
-    ">": operator.gt, "<": operator.lt,
-    ">=": operator.ge, "<=": operator.le,
-}
-
 
 def convert(text, type_name):
     if type_name == "int":
@@ -25,6 +18,22 @@ def convert(text, type_name):
     if type_name == "float":
         return float(text)
     return text
+
+
+def compare(x, op, value):
+    if op == "=":
+        return x == value
+    if op == "!=":
+        return x != value
+    if op == ">":
+        return x > value
+    if op == "<":
+        return x < value
+    if op == ">=":
+        return x >= value
+    if op == "<=":
+        return x <= value
+    return False
 
 
 def read_all(table):
@@ -105,7 +114,7 @@ def insert(table, **values):
 def select_where(table, column, op, value):
     result = []
     for row in read_all(table):
-        if OPS[op](row[column], value):
+        if compare(row[column], op, value):
             result.append(row)
     return result
 
@@ -151,7 +160,6 @@ def delete(table, row_id):
 
 
 def show(table):
-    print(f"{table}")
     for row in read_all(table):
         print(row)
 
@@ -167,6 +175,10 @@ if len(read_all("datasets")) == 0:
 show("datasets")
 show("models")
 show("experiments")
+
+print("Поиск: accuracy > 0.8")
+for row in select_where("experiments", "accuracy", ">", 0.8):
+    print(row)
 
 print("Проверки ошибок:")
 insert("experiments", dataset_id=99, model_id=1, accuracy=0.5, status="running")
