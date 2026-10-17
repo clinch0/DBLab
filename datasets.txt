@@ -1,2 +1,5 @@
-1;Тест1;classification;1000
-2;Тест2;regression;500
+1;MNIST;classification;70000
+2;CIFAR-10;classification;60000
+3;Boston;regression;506
+4;Iris;classification;150
+5;Wine;clustering;178

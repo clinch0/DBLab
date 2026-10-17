@@ -1,4 +1,4 @@
 datasets;id:int,name:str,task:str,size:int;
 models;id:int,name:str,version:str,description:str;
 experiments;id:int,dataset_id:int,model_id:int,accuracy:float,status:str;dataset_id>datasets,model_id>models
-runs;id:int,experiment_id:int,note:str;experiment_id>experiments
+big_experiments;id:int,dataset_id:int,model_id:int,accuracy:float,status:str;dataset_id>datasets,model_id>models

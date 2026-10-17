@@ -1,4 +1,5 @@
 import os
+import random
 
 SCHEMA_FILE = "schema.txt"
 SCHEMAS = {}
@@ -298,14 +299,58 @@ def fill_test_data():
     if len(read_all("datasets")) > 0:
         print("Данные уже есть, ничего не добавляю")
         return
-    insert("datasets", name="Тест1", task="classification", size=1000)
-    insert("datasets", name="Тест2", task="regression", size=500)
-    insert("models", name="МодельA", version="1.0", description="Описание модели A")
-    insert("models", name="МодельB", version="2.1", description="Описание модели B")
-    insert("experiments", dataset_id=1, model_id=1, accuracy=0.91, status="completed")
-    insert("experiments", dataset_id=1, model_id=2, accuracy=0.88, status="completed")
-    insert("experiments", dataset_id=2, model_id=1, accuracy=0.76, status="running")
-    print("Тестовые данные добавлены")
+
+    datasets = [
+        ("MNIST", "classification", 70000),
+        ("CIFAR-10", "classification", 60000),
+        ("Boston", "regression", 506),
+        ("Iris", "classification", 150),
+        ("Wine", "clustering", 178),
+    ]
+    models = [
+        ("LogReg", "1.0", "Логистическая регрессия"),
+        ("Tree", "1.2", "Решающее дерево"),
+        ("Forest", "2.0", "Случайный лес"),
+        ("SVM", "1.5", "Метод опорных векторов"),
+        ("KNN", "1.1", "Метод ближайших соседей"),
+    ]
+    for name, task, size in datasets:
+        insert("datasets", name=name, task=task, size=size)
+    for name, version, description in models:
+        insert("models", name=name, version=version, description=description)
+
+    for i in range(20):
+        dataset_id = i % 5 + 1
+        model_id = (i * 2) % 5 + 1
+        accuracy = round(0.60 + (i * 7 % 35) / 100, 2)
+        status = "running" if i % 4 == 3 else "completed"
+        insert("experiments", dataset_id=dataset_id, model_id=model_id, accuracy=accuracy, status=status)
+    print("Добавлено: 5 datasets, 5 models, 20 experiments")
+
+
+def generate_big_data(count):
+    create_default_tables()
+    dataset_ids = [row["id"] for row in read_all("datasets")]
+    model_ids = [row["id"] for row in read_all("models")]
+    if len(dataset_ids) == 0 or len(model_ids) == 0:
+        print("Ошибка: сначала создайте тестовые данные (пункт 7)")
+        return
+    if "big_experiments" not in SCHEMAS:
+        create_table("big_experiments",
+                     [("dataset_id", "int"), ("model_id", "int"), ("accuracy", "float"), ("status", "str")],
+                     {"dataset_id": "datasets", "model_id": "models"})
+    random.seed(1)
+    rows = []
+    for i in range(count):
+        rows.append({
+            "id": i + 1,
+            "dataset_id": random.choice(dataset_ids),
+            "model_id": random.choice(model_ids),
+            "accuracy": round(random.uniform(0.5, 0.99), 2),
+            "status": random.choice(["completed", "running", "failed"]),
+        })
+    save_all("big_experiments", rows)
+    print(f"В таблице big_experiments теперь {count} строк")
 
 
 def choose_table():
@@ -406,6 +451,7 @@ def menu():
         print("6 - эксперименты с названиями датасета и модели (INNER JOIN)")
         print("7 - создать таблицы задания и тестовые данные")
         print("8 - создать новую таблицу (CREATE TABLE)")
+        print("9 - сгенерировать большую таблицу для теста скорости")
         print("0 - выход")
         choice = input("Команда: ").strip()
 
@@ -420,6 +466,13 @@ def menu():
 
         elif choice == "8":
             ask_create_table()
+
+        elif choice == "9":
+            count_text = input("Сколько строк (например 10000): ").strip()
+            if not count_text.isdigit() or int(count_text) == 0:
+                print("Ошибка: нужно число больше нуля")
+                continue
+            generate_big_data(int(count_text))
 
         elif choice in ("1", "2", "3", "4", "5"):
             table = choose_table()
