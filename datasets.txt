@@ -3,3 +3,4 @@
 3;Boston;regression;506
 4;Iris;classification;150
 5;Wine;clustering;178
+6;Test;regression;100

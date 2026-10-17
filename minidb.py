@@ -1,8 +1,11 @@
 import os
 import random
 import time
+import zipfile
+import hashlib
 
 SCHEMA_FILE = "schema.txt"
+BACKUP_DIR = "backups"
 SCHEMAS = {}
 FOREIGN_KEYS = {}
 INDEXES = {}
@@ -462,6 +465,79 @@ def benchmark(table, count):
     print("Результат сохранён в benchmark.txt")
 
 
+def file_hash(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def backup():
+    if len(SCHEMAS) == 0:
+        print("Ошибка: нет таблиц, копировать нечего")
+        return None
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    path = os.path.join(BACKUP_DIR, "backup_" + time.strftime("%Y%m%d_%H%M%S") + ".zip")
+    file_names = [SCHEMA_FILE] + [table + ".txt" for table in SCHEMAS]
+    manifest = []
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for file_name in file_names:
+            if not os.path.exists(file_name):
+                continue
+            with open(file_name, "rb") as f:
+                data = f.read()
+            archive.writestr(file_name, data)
+            manifest.append(file_name + ";" + file_hash(data))
+        archive.writestr("manifest.txt", "\n".join(manifest) + "\n")
+    print(f"Резервная копия создана: {path} (файлов: {len(manifest)})")
+    return path
+
+
+def list_backups():
+    if not os.path.exists(BACKUP_DIR):
+        return []
+    names = [name for name in os.listdir(BACKUP_DIR) if name.endswith(".zip")]
+    names.sort()
+    return [os.path.join(BACKUP_DIR, name) for name in names]
+
+
+def restore(path):
+    if not os.path.exists(path):
+        print("Ошибка: такого файла нет")
+        return False
+    contents = {}
+    try:
+        with zipfile.ZipFile(path) as archive:
+            manifest_text = archive.read("manifest.txt").decode("utf-8")
+            for line in manifest_text.splitlines():
+                if line.strip() == "":
+                    continue
+                file_name, expected = line.split(";")
+                if os.path.basename(file_name) != file_name or not file_name.endswith(".txt"):
+                    print(f"Ошибка: недопустимое имя файла в архиве: {file_name}")
+                    return False
+                data = archive.read(file_name)
+                if file_hash(data) != expected:
+                    print(f"Ошибка: контрольная сумма файла {file_name} не совпадает, архив повреждён")
+                    return False
+                contents[file_name] = data
+    except (zipfile.BadZipFile, KeyError, ValueError):
+        print("Ошибка: архив повреждён или это не резервная копия")
+        return False
+    if SCHEMA_FILE not in contents:
+        print("Ошибка: в архиве нет файла схемы")
+        return False
+
+    for table in list(SCHEMAS):
+        for extension in (".txt", ".idx"):
+            if os.path.exists(table + extension):
+                os.remove(table + extension)
+    for file_name, data in contents.items():
+        with open(file_name, "wb") as f:
+            f.write(data)
+    INDEXES.clear()
+    load_schema()
+    print(f"Восстановлено из {path}: таблиц {len(SCHEMAS)}")
+    return True
+
+
 def choose_table():
     name = input(f"Таблица ({' / '.join(SCHEMAS)}): ").strip()
     if name not in SCHEMAS:
@@ -549,6 +625,24 @@ def ask_create_table():
         print(f"Таблица {name} создана")
 
 
+def ask_restore():
+    backups = list_backups()
+    if len(backups) == 0:
+        print("Резервных копий нет")
+        return
+    for i, path in enumerate(backups, start=1):
+        print(i, path)
+    text = input("Номер копии: ").strip()
+    if not text.isdigit() or not 1 <= int(text) <= len(backups):
+        print("Ошибка: нет такого номера")
+        return
+    answer = input("Текущие данные будут заменены. Продолжить? (да/нет): ").strip().lower()
+    if answer != "да":
+        print("Отменено")
+        return
+    restore(backups[int(text) - 1])
+
+
 def menu():
     while True:
         print()
@@ -563,6 +657,8 @@ def menu():
         print("9 - сгенерировать большую таблицу для теста скорости")
         print("10 - найти строку по id (через индекс)")
         print("11 - замер скорости: перебор и индекс")
+        print("12 - сделать резервную копию (backup)")
+        print("13 - восстановить из резервной копии (restore)")
         print("0 - выход")
         choice = input("Команда: ").strip()
 
@@ -607,6 +703,12 @@ def menu():
                 print("Ошибка: нужно число больше нуля")
                 continue
             benchmark(table, int(count_text))
+
+        elif choice == "12":
+            backup()
+
+        elif choice == "13":
+            ask_restore()
 
         elif choice in ("1", "2", "3", "4", "5"):
             table = choose_table()
