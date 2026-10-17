@@ -1,9 +1,11 @@
 import os
 import random
+import time
 
 SCHEMA_FILE = "schema.txt"
 SCHEMAS = {}
 FOREIGN_KEYS = {}
+INDEXES = {}
 TYPES = ("int", "float", "str")
 COMPARE_SIGNS = ("=", "!=", ">", "<", ">=", "<=")
 
@@ -120,6 +122,14 @@ def compare(x, op, value):
     return False
 
 
+def parse_line(table, line):
+    parts = line.strip().split(";")
+    row = {}
+    for i, (name, type_name) in enumerate(SCHEMAS[table]):
+        row[name] = convert(parts[i], type_name)
+    return row
+
+
 def read_all(table):
     rows = []
     path = table + ".txt"
@@ -129,12 +139,74 @@ def read_all(table):
         for line in f:
             if line.strip() == "":
                 continue
-            parts = line.strip().split(";")
-            row = {}
-            for i, (name, type_name) in enumerate(SCHEMAS[table]):
-                row[name] = convert(parts[i], type_name)
-            rows.append(row)
+            rows.append(parse_line(table, line))
     return rows
+
+
+def build_index(table):
+    path = table + ".txt"
+    index = {}
+    if os.path.exists(path):
+        offset = 0
+        with open(path, "rb") as f:
+            for line in f:
+                if line.strip() != b"":
+                    row_id = int(line.split(b";", 1)[0])
+                    index[row_id] = offset
+                offset += len(line)
+    with open(table + ".idx", "w", encoding="utf-8") as f:
+        for row_id, offset in index.items():
+            f.write(f"{row_id};{offset}\n")
+    INDEXES[table] = index
+    return index
+
+
+def load_index_file(table):
+    index = {}
+    with open(table + ".idx", "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip() == "":
+                continue
+            row_id, offset = line.strip().split(";")
+            index[int(row_id)] = int(offset)
+    return index
+
+
+def get_index(table):
+    if table in INDEXES:
+        return INDEXES[table]
+    table_path = table + ".txt"
+    index_path = table + ".idx"
+    fresh = (os.path.exists(index_path) and os.path.exists(table_path)
+             and os.path.getmtime(index_path) >= os.path.getmtime(table_path))
+    if fresh:
+        INDEXES[table] = load_index_file(table)
+    else:
+        build_index(table)
+    return INDEXES[table]
+
+
+def find_by_id_scan(table, row_id):
+    path = table + ".txt"
+    if not os.path.exists(path):
+        return None
+    key = str(row_id).encode("utf-8")
+    with open(path, "rb") as f:
+        for line in f:
+            if line.split(b";", 1)[0] == key:
+                return parse_line(table, line.decode("utf-8"))
+    return None
+
+
+def find_by_id_index(table, row_id):
+    index = get_index(table)
+    offset = index.get(row_id)
+    if offset is None:
+        return None
+    with open(table + ".txt", "rb") as f:
+        f.seek(offset)
+        line = f.readline()
+    return parse_line(table, line.decode("utf-8"))
 
 
 def save_all(table, rows):
@@ -142,6 +214,7 @@ def save_all(table, rows):
         for row in rows:
             values = [str(row[name]) for name, _ in SCHEMAS[table]]
             f.write(";".join(values) + "\n")
+    build_index(table)
 
 
 def check_type(value, type_name):
@@ -155,10 +228,7 @@ def check_type(value, type_name):
 
 
 def row_exists(table, row_id):
-    for row in read_all(table):
-        if row["id"] == row_id:
-            return True
-    return False
+    return find_by_id_index(table, row_id) is not None
 
 
 def check_foreign_keys(table, column, value):
@@ -353,6 +423,45 @@ def generate_big_data(count):
     print(f"В таблице big_experiments теперь {count} строк")
 
 
+def benchmark(table, count):
+    index = get_index(table)
+    if len(index) == 0:
+        print("Ошибка: таблица пустая")
+        return
+    ids = list(index.keys())
+    random.seed(2)
+    queries = [random.choice(ids) for _ in range(count)]
+
+    start = time.perf_counter()
+    for row_id in queries:
+        find_by_id_scan(table, row_id)
+    scan_time = time.perf_counter() - start
+
+    start = time.perf_counter()
+    for row_id in queries:
+        find_by_id_index(table, row_id)
+    index_time = time.perf_counter() - start
+
+    start = time.perf_counter()
+    build_index(table)
+    build_time = time.perf_counter() - start
+
+    scan_ms = scan_time / count * 1000
+    index_ms = index_time / count * 1000
+    lines = [
+        f"Таблица: {table}, строк: {len(ids)}, запросов: {count}",
+        f"Поиск перебором файла: {scan_ms:.4f} мс на запрос",
+        f"Поиск по индексу id->offset: {index_ms:.4f} мс на запрос",
+        f"Ускорение: в {scan_ms / index_ms:.1f} раз",
+        f"Построение индекса: {build_time * 1000:.1f} мс",
+    ]
+    for line in lines:
+        print(line)
+    with open("benchmark.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print("Результат сохранён в benchmark.txt")
+
+
 def choose_table():
     name = input(f"Таблица ({' / '.join(SCHEMAS)}): ").strip()
     if name not in SCHEMAS:
@@ -452,6 +561,8 @@ def menu():
         print("7 - создать таблицы задания и тестовые данные")
         print("8 - создать новую таблицу (CREATE TABLE)")
         print("9 - сгенерировать большую таблицу для теста скорости")
+        print("10 - найти строку по id (через индекс)")
+        print("11 - замер скорости: перебор и индекс")
         print("0 - выход")
         choice = input("Команда: ").strip()
 
@@ -473,6 +584,29 @@ def menu():
                 print("Ошибка: нужно число больше нуля")
                 continue
             generate_big_data(int(count_text))
+
+        elif choice == "10":
+            table = choose_table()
+            if table is None:
+                continue
+            row_id = ask_id()
+            if row_id is None:
+                continue
+            row = find_by_id_index(table, row_id)
+            if row is None:
+                print("Строки с таким id нет")
+            else:
+                print(row)
+
+        elif choice == "11":
+            table = choose_table()
+            if table is None:
+                continue
+            count_text = input("Сколько запросов (например 1000): ").strip()
+            if not count_text.isdigit() or int(count_text) == 0:
+                print("Ошибка: нужно число больше нуля")
+                continue
+            benchmark(table, int(count_text))
 
         elif choice in ("1", "2", "3", "4", "5"):
             table = choose_table()
