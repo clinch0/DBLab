@@ -758,5 +758,6 @@ def menu():
             print("Неизвестная команда")
 
 
-load_schema()
-menu()
+if __name__ == "__main__":
+    load_schema()
+    menu()
