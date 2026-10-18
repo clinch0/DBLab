@@ -101,3 +101,7 @@ docker run -it --rm -v "${PWD}\data:/data" minidb
 ```
 docker run --rm minidb python -m pytest /app -q
 ```
+
+## GUI
+
+tkinter. Навайбкодил
