@@ -94,7 +94,7 @@ docker build -t minidb .
 docker run -it --rm -v "${PWD}\data:/data" minidb
 ```
 
-в пустой папке `data` начните с пункта 7
+в пустой папке data начните с пункта 7
 
 Тесты в контейнере:
 
