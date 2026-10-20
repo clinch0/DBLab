@@ -105,3 +105,7 @@ docker run --rm minidb python -m pytest /app -q
 ## GUI
 
 tkinter. Навайбкодил
+
+```
+python gui.py
+```
